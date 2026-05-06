@@ -1,4 +1,4 @@
-from config import XPATH, TIMEOUT
+from config import FUCKING_FAST_LINKS_XPATH, TIMEOUT
 from requests.exceptions import HTTPError, ConnectionError, Timeout, RequestException
 from lxml import html
 import requests
@@ -28,7 +28,7 @@ class FetchThread(QThread):
                 return {"Request Error": e}
 
             tree = html.fromstring(response.content)
-            container = tree.xpath(XPATH)
+            container = tree.xpath(FUCKING_FAST_LINKS_XPATH)
 
             if not container:
                 self.error.emit("Could not locate the direct links section on this page. Verify the URL.")
