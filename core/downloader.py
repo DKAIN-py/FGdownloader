@@ -6,6 +6,8 @@ import aiofiles
 import psutil
 import requests
 from lxml import html
+import re
+import html as htmllib
 from PySide6.QtCore import QObject, Signal
 
 from config import FUCKING_FAST_DOWNLOAD_BUTTON_XPATH, TIMEOUT
@@ -26,7 +28,6 @@ class DownloadWorker(QObject):
         self.use_async = use_async
 
     def apply_traffic_priorities(self):
-        """Sets Windows process priority to give the app network/CPU priority."""
         try:
             p = psutil.Process(os.getpid())
             if self.priority == "High":
@@ -38,7 +39,7 @@ class DownloadWorker(QObject):
 
     def get_final_download_url(self, page_url):
         """
-        Validates the URL using the download button XPath and extracts the file URL.
+        Extracts the direct dl.fuckingfast.co link from JavaScript window.open calls.
         """
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -47,33 +48,36 @@ class DownloadWorker(QObject):
             response = requests.get(page_url, headers=headers, timeout=TIMEOUT)
             if response.status_code != 200:
                 return None
-            print(f"Raw content: {response.content}\n\n")
+
+            raw_html = response.text
             tree = html.fromstring(response.content)
-            print(f"Tree: {tree}\n\n")
-            # Validate with your exact XPath
+
+            # 1. First, validate we are on the right page using your XPath
             button_nodes = tree.xpath(FUCKING_FAST_DOWNLOAD_BUTTON_XPATH)
-            
             if not button_nodes:
-                # Validation failed (Wrong site or ad redirect)
                 return None
 
-            # Get the form or direct link that begins the file download
+            # 2. Extract the URL from window.open("...") using Regex
+            # This handles the dynamic link inside the <script> block
+            pattern = r'window\.open\("(https:\/\/dl\.fuckingfast\.co\/dl\/[^"]+)"\)'
+            match = re.search(pattern, raw_html)
+            
+            if match:
+                direct_url = match.group(1)
+                # Unescape HTML entities (like &amp; to &)
+                return htmllib.unescape(direct_url)
+                
+            # Fallback to standard forms if they ever change the site
             form_nodes = tree.xpath('//form[@action]')
             if form_nodes:
                 return form_nodes[0].get('action')
                 
-            # Fallback for anchor links
-            download_links = tree.xpath('//a[contains(@class, "download")]/@href')
-            if download_links:
-                return download_links[0]
-                
         except Exception as e:
-            self.download_error.emit(f"Validation error for {page_url}: {str(e)}")
+            self.download_error.emit(f"Link extraction failed: {str(e)}")
             
         return None
 
     async def download_chunked_with_resume(self, session, item, save_path):
-        """Downloads the file with resume capabilities and tracks progress."""
         headers = {}
         if os.path.exists(save_path):
             downloaded_bytes = os.path.getsize(save_path)
@@ -81,29 +85,30 @@ class DownloadWorker(QObject):
         else:
             downloaded_bytes = 0
 
-        # Resolve the actual file endpoint on FuckingFast
+        # RESOLVE THE LINK
         direct_url = self.get_final_download_url(item['url'])
         if not direct_url:
-            self.download_error.emit(f"Failed to validate the download link for {item['name']}. Invalid webpage or ad detected.")
+            self.download_error.emit(f"Could not resolve file link for {item['name']}. Ad/Redirect detected.")
             return
 
-        async with session.get(direct_url, headers=headers) as response:
-            if response.status in [200, 206]:
-                total_bytes = int(response.headers.get('Content-Length', 0)) + downloaded_bytes
-                mode = 'ab' if downloaded_bytes > 0 else 'wb'
-                
-                async with aiofiles.open(save_path, mode) as f:
-                    async for chunk in response.content.iter_chunked(64 * 1024):
-                        await f.write(chunk)
-                        downloaded_bytes += len(chunk)
-                        
-                        # Match current progress with the filename being processed
-                        self.progress_update.emit(item['name'], downloaded_bytes, total_bytes)
-                        
-                        if self.speed_limit_mbps:
-                            await asyncio.sleep(len(chunk) / (self.speed_limit_mbps * 125000))
-            else:
-                self.download_error.emit(f"Server returned status {response.status} for {item['name']}")
+        try:
+            async with session.get(direct_url, headers=headers) as response:
+                if response.status in [200, 206]:
+                    total_bytes = int(response.headers.get('Content-Length', 0)) + downloaded_bytes
+                    mode = 'ab' if downloaded_bytes > 0 else 'wb'
+                    
+                    async with aiofiles.open(save_path, mode) as f:
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            await f.write(chunk)
+                            downloaded_bytes += len(chunk)
+                            self.progress_update.emit(item['name'], downloaded_bytes, total_bytes)
+                            
+                            if self.speed_limit_mbps:
+                                await asyncio.sleep(len(chunk) / (self.speed_limit_mbps * 125000))
+                else:
+                    self.download_error.emit(f"Server Error {response.status} for {item['name']}")
+        except Exception as e:
+            self.download_error.emit(f"Download failed: {str(e)}")
 
     async def download_with_semaphore(self, session, item, semaphore):
         async with semaphore:
@@ -116,12 +121,12 @@ class DownloadWorker(QObject):
 
         async with aiohttp.ClientSession() as session:
             if self.use_async:
-                self.status_update.emit("High-speed network connection detected: Running in Async Mode")
+                self.status_update.emit("Mode: High-Speed Async")
                 semaphore = asyncio.Semaphore(3)
                 tasks = [self.download_with_semaphore(session, item, semaphore) for item in self.links]
                 await asyncio.gather(*tasks)
             else:
-                self.status_update.emit("Standard connection detected: Running in Sequential Mode")
+                self.status_update.emit("Mode: Sequential Sync")
                 for item in self.links:
                     save_path = os.path.join(self.download_dir, item['name'])
                     await self.download_chunked_with_resume(session, item, save_path)
