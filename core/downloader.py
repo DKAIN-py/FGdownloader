@@ -17,6 +17,8 @@ class DownloadWorker(QObject):
     status_update = Signal(str)
     download_finished = Signal()
     download_error = Signal(str)
+    paused = Signal(str)  # Emitted when a file is paused
+    resumed = Signal(str)  # Emitted when a file is resumed
 
     def __init__(self, links, download_dir, internet_speed_mbps=30, speed_limit_mbps=None, priority="Normal", use_async=True):
         super().__init__()
@@ -26,6 +28,11 @@ class DownloadWorker(QObject):
         self.speed_limit_mbps = speed_limit_mbps
         self.priority = priority
         self.use_async = use_async
+        self._loop = None
+        
+        # Pause/resume control - use filename as key for individual file control
+        self.paused_files = set()  # Set of paused filenames
+        self.pause_events = {}  # Dict mapping filename -> asyncio.Event for pause control
 
     def apply_traffic_priorities(self):
         try:
@@ -36,6 +43,28 @@ class DownloadWorker(QObject):
                 p.nice(psutil.NORMAL_PRIORITY_CLASS)
         except Exception:
             pass
+    
+    def pause_file(self, filename):
+        self.paused_files.add(filename)
+        # No event manipulation here — the download loop polls paused_files
+        self.paused.emit(filename)
+    
+    def pause_all(self):
+        for link in self.links:
+            self.pause_file(link['name'])
+    
+    def resume_file(self, filename):
+        self.paused_files.discard(filename)  # unblock the while-loop guard
+        if self._loop is not None and filename in self.pause_events:
+            # This is called from Qt's main thread; the asyncio loop runs in a
+            # worker thread. call_soon_threadsafe is the only safe way to wake up
+            # a coroutine from outside the loop's thread.
+            self._loop.call_soon_threadsafe(self.pause_events[filename].set)
+        self.resumed.emit(filename)
+    
+    def resume_all(self):
+        for link in self.links:
+            self.resume_file(link['name'])
 
     def get_final_download_url(self, page_url):
         """
@@ -78,6 +107,13 @@ class DownloadWorker(QObject):
         return None
 
     async def download_chunked_with_resume(self, session, item, save_path):
+        filename = item['name']
+        
+        # Initialize pause event for this file
+        if filename not in self.pause_events:
+            self.pause_events[filename] = asyncio.Event()
+            self.pause_events[filename].set()  # Start as not paused
+        
         headers = {}
         if os.path.exists(save_path):
             downloaded_bytes = os.path.getsize(save_path)
@@ -99,9 +135,14 @@ class DownloadWorker(QObject):
                     
                     async with aiofiles.open(save_path, mode) as f:
                         async for chunk in response.content.iter_chunked(64 * 1024):
+                            # Check if paused and handle pause/resume
+                            if filename in self.paused_files:
+                                self.pause_events[filename].clear()
+                                await self.pause_events[filename].wait() 
+                            
                             await f.write(chunk)
                             downloaded_bytes += len(chunk)
-                            self.progress_update.emit(item['name'], downloaded_bytes, total_bytes)
+                            self.progress_update.emit(filename, downloaded_bytes, total_bytes)
                             
                             if self.speed_limit_mbps:
                                 await asyncio.sleep(len(chunk) / (self.speed_limit_mbps * 125000))
@@ -136,9 +177,11 @@ class DownloadWorker(QObject):
     def start(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        self._loop = loop
         try:
             loop.run_until_complete(self.run_downloads())
         finally:
+            self._loop = None
             loop.close()
 
 def check_internet_speed_mbps(test_url="https://speed.hetzner.de/100MB.bin", timeout=3):

@@ -236,6 +236,15 @@ QComboBox QAbstractItemView {
     font-size: 11px;
     font-weight: 600;
 }
+#badgePaused {
+    background: #2a1f0e;
+    color: #e0a855;
+    border: 1px solid #4a3a1a;
+    border-radius: 4px;
+    padding: 2px 0px;
+    font-size: 11px;
+    font-weight: 600;
+}
 
 /* ── Counter label ────────────────────────────────── */
 #counterLabel {
@@ -246,6 +255,68 @@ QComboBox QAbstractItemView {
 #counterSub {
     font-size: 11px;
     color: #484848;
+}
+
+/* ── Pause/Resume buttons ─────────────────────────── */
+#pauseBtn {
+    background-color: #2a1f0e;
+    color: #e0a855;
+    border: 1px solid #4a3a1a;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+#pauseBtn:hover {
+    background-color: #3a2a1a;
+    color: #f0b855;
+}
+#pauseBtn:disabled {
+    background-color: #1c1c1c;
+    color: #404040;
+    border-color: #2a2a2a;
+}
+
+#resumeBtn {
+    background-color: #0e2340;
+    color: #4a9eff;
+    border: 1px solid #1a3a6a;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+#resumeBtn:hover {
+    background-color: #1a3a5a;
+    color: #6ab0ff;
+}
+
+#pauseAllBtn {
+    background-color: #2a1f0e;
+    color: #e0a855;
+    border: 1px solid #4a3a1a;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+#pauseAllBtn:hover {
+    background-color: #3a2a1a;
+    color: #f0b855;
+}
+
+#resumeAllBtn {
+    background-color: #0e2340;
+    color: #4a9eff;
+    border: 1px solid #1a3a6a;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+#resumeAllBtn:hover {
+    background-color: #1a3a5a;
+    color: #6ab0ff;
 }
 
 /* ── Scroll bars ──────────────────────────────────── */

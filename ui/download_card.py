@@ -2,26 +2,30 @@
 Download progress card component for displaying individual file download status.
 """
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton
+from PySide6.QtCore import Qt, Signal
 
 
 class DownloadCard(QWidget):
-    """A card showing a single file's download progress."""
+    """A card showing a single file's download progress with pause/resume controls."""
+    
+    pause_clicked = Signal(str)  # Emits filename when pause is clicked
+    resume_clicked = Signal(str)  # Emits filename when resume is clicked
     
     def __init__(self, filename, parent=None):
         super().__init__(parent)
         self.filename = filename
+        self.is_paused = False
         self.init_ui()
     
     def init_ui(self):
         self.setObjectName("downloadCard")
-        self.setMinimumHeight(100)
+        self.setMinimumHeight(120)
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
         
-        # Header: filename + status badge
+        # Header: filename + status badge + pause button
         header_layout = QHBoxLayout()
         header_layout.setSpacing(10)
         
@@ -35,6 +39,13 @@ class DownloadCard(QWidget):
         self.status_badge.setMaximumWidth(60)
         self.status_badge.setAlignment(Qt.AlignCenter)
         header_layout.addWidget(self.status_badge)
+        
+        # Pause/Resume button
+        self.pause_btn = QPushButton("⏸ Pause")
+        self.pause_btn.setObjectName("pauseBtn")
+        self.pause_btn.setMaximumWidth(90)
+        self.pause_btn.clicked.connect(self._on_pause_resume_clicked)
+        header_layout.addWidget(self.pause_btn)
         
         layout.addLayout(header_layout)
         
@@ -53,13 +64,41 @@ class DownloadCard(QWidget):
         
         self.setLayout(layout)
     
-    def set_status(self, status):
-        """Update the status badge. Expected: 'Queued', 'Active', 'Done', 'Error'"""
-        self.status_badge.setText(status)
-        self.status_badge.setObjectName(f"badge{status}")
+    def _on_pause_resume_clicked(self):
+        """Handle pause/resume button click."""
+        if self.is_paused:
+            self.resume_clicked.emit(self.filename)
+        else:
+            self.pause_clicked.emit(self.filename)
+    
+    def set_paused(self, paused=True):
+        """Set paused state and update button."""
+        self.is_paused = paused
+        if paused:
+            self.pause_btn.setText("▶ Resume")
+            self.pause_btn.setObjectName("resumeBtn")
+            self.status_badge.setText("Paused")
+            self.status_badge.setObjectName("badgePaused")
+        else:
+            self.pause_btn.setText("⏸ Pause")
+            self.pause_btn.setObjectName("pauseBtn")
+            self.status_badge.setText("Active")
+            self.status_badge.setObjectName("badgeActive")
+        
         # Force style refresh
+        self.pause_btn.style().unpolish(self.pause_btn)
+        self.pause_btn.style().polish(self.pause_btn)
         self.status_badge.style().unpolish(self.status_badge)
         self.status_badge.style().polish(self.status_badge)
+    
+    def set_status(self, status):
+        """Update the status badge. Expected: 'Queued', 'Active', 'Paused', 'Done', 'Error'"""
+        if status != "Paused":  # Don't override paused state
+            self.status_badge.setText(status)
+            self.status_badge.setObjectName(f"badge{status}")
+            # Force style refresh
+            self.status_badge.style().unpolish(self.status_badge)
+            self.status_badge.style().polish(self.status_badge)
     
     def update_progress(self, current_bytes, total_bytes):
         """Update the progress bar and file size label."""
@@ -75,6 +114,7 @@ class DownloadCard(QWidget):
     def set_completed(self):
         """Mark as completed."""
         self.set_status("Done")
+        self.pause_btn.setEnabled(False)
         self.progress_bar.setObjectName("cardProgressDone")
         self.progress_bar.setValue(100)
         self.progress_bar.style().unpolish(self.progress_bar)

@@ -253,6 +253,8 @@ class MainWindow(QWidget):
         self.worker.progress_update.connect(self._on_download_progress)
         self.worker.status_update.connect(self._on_status_update)
         self.worker.download_finished.connect(self._on_download_finished)
+        self.worker.paused.connect(self._on_file_paused)
+        self.worker.resumed.connect(self._on_file_resumed)
         
         # Cleanup
         self.worker.download_finished.connect(self.download_thread.quit)
@@ -263,6 +265,15 @@ class MainWindow(QWidget):
         for link in selected_links:
             self.page_downloads.add_download(link['name'])
         
+        # Connect individual card pause/resume buttons
+        for filename, card in self.page_downloads.downloads.items():
+            card.pause_clicked.connect(lambda fname=filename: self.worker.pause_file(fname))
+            card.resume_clicked.connect(lambda fname=filename: self.worker.resume_file(fname))
+        
+        # Connect pause-all/resume-all buttons
+        self.page_downloads.pause_all_clicked.connect(self.worker.pause_all)
+        self.page_downloads.resume_all_clicked.connect(self.worker.resume_all)
+        
         self.download_thread.start()
     
     def _on_download_progress(self, filename, current, total):
@@ -272,6 +283,16 @@ class MainWindow(QWidget):
     def _on_status_update(self, message):
         """Handle status update."""
         self.page_downloads.set_status_message(message)
+    
+    def _on_file_paused(self, filename):
+        """Handle file pause."""
+        if filename in self.page_downloads.downloads:
+            self.page_downloads.downloads[filename].set_paused(True)
+    
+    def _on_file_resumed(self, filename):
+        """Handle file resume."""
+        if filename in self.page_downloads.downloads:
+            self.page_downloads.downloads[filename].set_paused(False)
     
     def _on_download_finished(self):
         """Handle download completion."""
