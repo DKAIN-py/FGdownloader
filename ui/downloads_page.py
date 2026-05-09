@@ -12,7 +12,9 @@ class DownloadsProgressPage(QWidget):
     
     pause_all_clicked = Signal()  # Emitted when pause-all button is clicked
     resume_all_clicked = Signal()  # Emitted when resume-all button is clicked
-    
+    pause_file_requested = Signal(str)    # ← add
+    resume_file_requested = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.downloads = {}  # Maps filename -> DownloadCard
@@ -71,15 +73,28 @@ class DownloadsProgressPage(QWidget):
         
         self.setLayout(layout)
     
+    # def _on_pause_all_clicked(self):
+    #     print(f"[UI] Pause all clicked, all_paused={self.all_paused}")
+    #     if self.all_paused:
+    #         for filename in self.downloads:
+    #             print(f"[UI] Emitting resume for {filename}")
+    #             self.resume_file_requested.emit(filename)
+    #         self.set_pause_all_state(False)
+    #     else:
+    #         for filename in self.downloads:
+    #             print(f"[UI] Emitting pause for {filename}")
+    #             self.pause_file_requested.emit(filename)
+    #         self.set_pause_all_state(True)
+    
     def _on_pause_all_clicked(self):
-        """Handle pause-all/resume-all button click."""
+        print(f"[UI] Pause all clicked, all_paused={self.all_paused}")
         if self.all_paused:
-            self.resume_all_clicked.emit()
+            self.resume_all_clicked.emit()   # ← this one has DirectConnection to worker
             self.set_pause_all_state(False)
         else:
-            self.pause_all_clicked.emit()
+            self.pause_all_clicked.emit()    # ← this one has DirectConnection to worker
             self.set_pause_all_state(True)
-    
+
     def set_pause_all_state(self, paused=True):
         """Update pause-all button state."""
         self.all_paused = paused

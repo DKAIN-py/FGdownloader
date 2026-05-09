@@ -17,7 +17,7 @@ from ui.components import URLInputSection, DirectoryInputSection, DownloadOption
 from ui.file_list import FileListGroup
 from ui.settings import SettingsDialog
 from ui.downloads_page import DownloadsProgressPage
-
+from config import DETECTION_SPEED
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -228,7 +228,7 @@ class MainWindow(QWidget):
             use_async = True
         else:
             detected_speed = check_internet_speed_mbps()
-            use_async = detected_speed > 25
+            use_async = detected_speed > DETECTION_SPEED
         
         # Get options
         opts = self.options.get_options()
@@ -273,6 +273,13 @@ class MainWindow(QWidget):
         # Connect pause-all/resume-all buttons
         self.page_downloads.pause_all_clicked.connect(self.worker.pause_all)
         self.page_downloads.resume_all_clicked.connect(self.worker.resume_all)
+
+        self.page_downloads.pause_all_clicked.connect(
+            self.worker.pause_all, Qt.ConnectionType.DirectConnection
+        )
+        self.page_downloads.resume_all_clicked.connect(
+            self.worker.resume_all, Qt.ConnectionType.DirectConnection
+        )
         
         self.download_thread.start()
     

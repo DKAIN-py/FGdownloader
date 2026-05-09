@@ -8,7 +8,7 @@ import requests
 from lxml import html
 import re
 import html as htmllib
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot
 
 from config import FUCKING_FAST_DOWNLOAD_BUTTON_XPATH, TIMEOUT
 
@@ -45,26 +45,38 @@ class DownloadWorker(QObject):
             pass
     
     def pause_file(self, filename):
+        print(f"[WORKER] pause_file called for {filename}")
         self.paused_files.add(filename)
-        # No event manipulation here — the download loop polls paused_files
+        print(f"[WORKER] paused_files is now {self.paused_files}")
         self.paused.emit(filename)
-    
+
     def pause_all(self):
+        # Add everything to the set atomically before any coroutine checks it
         for link in self.links:
-            self.pause_file(link['name'])
-    
+            self.paused_files.add(link['name'])
+        # Emit after so UI reflects final state
+        for link in self.links:
+            self.paused.emit(link['name'])
+
     def resume_file(self, filename):
-        self.paused_files.discard(filename)  # unblock the while-loop guard
+        print(f"[WORKER] resume_file called for {filename}")
+        self.paused_files.discard(filename)
+        print(f"[WORKER] _loop is {self._loop}")
+        print(f"[WORKER] pause_events has {filename}: {filename in self.pause_events}")
         if self._loop is not None and filename in self.pause_events:
-            # This is called from Qt's main thread; the asyncio loop runs in a
-            # worker thread. call_soon_threadsafe is the only safe way to wake up
-            # a coroutine from outside the loop's thread.
             self._loop.call_soon_threadsafe(self.pause_events[filename].set)
+            print(f"[WORKER] called set on event for {filename}")
         self.resumed.emit(filename)
-    
+
     def resume_all(self):
+        # Discard everything first, then wake all events
         for link in self.links:
-            self.resume_file(link['name'])
+            self.paused_files.discard(link['name'])
+        for link in self.links:
+            filename = link['name']
+            if self._loop is not None and filename in self.pause_events:
+                self._loop.call_soon_threadsafe(self.pause_events[filename].set)
+            self.resumed.emit(filename)
 
     def get_final_download_url(self, page_url):
         """
@@ -135,10 +147,11 @@ class DownloadWorker(QObject):
                     
                     async with aiofiles.open(save_path, mode) as f:
                         async for chunk in response.content.iter_chunked(64 * 1024):
-                            # Check if paused and handle pause/resume
                             if filename in self.paused_files:
+                                print(f"[ASYNC] {filename} is paused, clearing event and waiting")
                                 self.pause_events[filename].clear()
-                                await self.pause_events[filename].wait() 
+                                await self.pause_events[filename].wait()
+                                print(f"[ASYNC] {filename} resumed")
                             
                             await f.write(chunk)
                             downloaded_bytes += len(chunk)
