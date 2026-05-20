@@ -10,8 +10,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread
 
+from pathlib import Path
+
 from core.parser import FetchThread
 from core.downloader import DownloadWorker, check_internet_speed_mbps
+from core.extractor import ExtractWorker
 from ui.stylesheet import DARK
 from ui.components import URLInputSection, DirectoryInputSection, DownloadOptionsSection
 from ui.file_list import FileListGroup
@@ -230,10 +233,10 @@ class MainWindow(QWidget):
             detected_speed = check_internet_speed_mbps()
             use_async = detected_speed > DETECTION_SPEED
         
-        # Get options
+        # Get execution options (extract, setup)
         opts = self.options.get_options()
         
-        # Switch to download page
+        # Switch stack index to download page dashboard
         self.pages.setCurrentIndex(1)
         
         # Initialize worker
@@ -248,32 +251,32 @@ class MainWindow(QWidget):
         self.download_thread = QThread()
         self.worker.moveToThread(self.download_thread)
         
-        # Connect signals
+        # Connect signals for core runtime tracking
         self.download_thread.started.connect(self.worker.start)
         self.worker.progress_update.connect(self._on_download_progress)
         self.worker.status_update.connect(self._on_status_update)
-        self.worker.download_finished.connect(self._on_download_finished)
         self.worker.paused.connect(self._on_file_paused)
         self.worker.resumed.connect(self._on_file_resumed)
         
-        # Cleanup
+        # PIPELINE LINK: Intercept finished slot to run extraction/setup choices via lambda
+        self.worker.download_finished.connect(lambda: self._on_download_finished(opts))
+        
+        # Thread lifetime cleanup rules
         self.worker.download_finished.connect(self.download_thread.quit)
         self.worker.download_finished.connect(self.worker.deleteLater)
         self.download_thread.finished.connect(self.download_thread.deleteLater)
         
-        # Add downloads to page
+        # Add tracking cards to the download page
         for link in selected_links:
             self.page_downloads.add_download(link['name'])
         
-        # Connect individual card pause/resume buttons
+        # Connect individual row layout tracking card buttons
+        # The fname=filename default argument prevents the closure bug inside loops!
         for filename, card in self.page_downloads.downloads.items():
             card.pause_clicked.connect(lambda fname=filename: self.worker.pause_file(fname))
             card.resume_clicked.connect(lambda fname=filename: self.worker.resume_file(fname))
         
-        # Connect pause-all/resume-all buttons
-        self.page_downloads.pause_all_clicked.connect(self.worker.pause_all)
-        self.page_downloads.resume_all_clicked.connect(self.worker.resume_all)
-
+        # Connect global control dashboard action signals
         self.page_downloads.pause_all_clicked.connect(
             self.worker.pause_all, Qt.ConnectionType.DirectConnection
         )
@@ -281,6 +284,7 @@ class MainWindow(QWidget):
             self.worker.resume_all, Qt.ConnectionType.DirectConnection
         )
         
+        # Fire background execution loop thread
         self.download_thread.start()
     
     def _on_download_progress(self, filename, current, total):
@@ -301,10 +305,64 @@ class MainWindow(QWidget):
         if filename in self.page_downloads.downloads:
             self.page_downloads.downloads[filename].set_paused(False)
     
-    def _on_download_finished(self):
-        """Handle download completion."""
-        self.page_downloads.set_status_message("All downloads completed!")
-        QMessageBox.information(self, "Success", "All files have been downloaded successfully.")
+    def _on_download_finished(self, opts):
+        """Fires when downloading is complete and handles downstream options."""
+        self._on_status_update("All downloads completed successfully!")
+        
+        base_dir = Path(self.dir_input.get_directory().strip())
+        
+        # 1. Handle Automatic Extraction
+        if opts["extract"]:
+            # Find the first .rar volume part
+            first_part = None
+            for item in self.fetched_data['base']:
+                name = item['name']
+                if ".part1.rar" in name or ".part01.rar" in name or (name.endswith(".rar") and ".part" not in name):
+                    first_part = name
+                    break
+            
+            if first_part:
+                full_archive_path = base_dir / first_part
+                extract_destination = base_dir / "Extracted_Game"
+                
+                self._on_status_update("Preparing automated extraction...")
+                self.run_extraction_pipeline(full_archive_path, extract_destination, opts["setup"])
+                return  # Exit here; extraction routine will take over launching setup.exe
+            else:
+                QMessageBox.warning(self, "Extraction Error", "Could not locate the main .part1.rar archive volume.")
+
+       
+        
+    def run_extraction_pipeline(self, archive_path, destination_path, launch_setup_after):
+        """Spins up the extraction worker in a separate background thread."""
+        
+        self.extractor_worker = ExtractWorker(archive_path, destination_path, "GameInstaller")
+        self.extractor_thread = QThread()
+        self.extractor_worker.moveToThread(self.extractor_thread)
+        
+        self.extractor_thread.started.connect(self.extractor_worker.start_extraction)
+        
+        # Update progress label or bar with extraction percentages
+        self.extractor_worker.progress_update.connect(
+            lambda msg, percent: self._on_status_update(f"{msg} ({percent}%)")
+        )
+        
+        # Cleanup and chaining triggers
+        self.extractor_worker.extraction_finished.connect(self.extractor_thread.quit)
+        self.extractor_worker.extraction_finished.connect(self.extractor_worker.deleteLater)
+        self.extractor_thread.finished.connect(self.extractor_thread.deleteLater)
+        
+        # If setup is true, hook it up to run immediately when extraction finishes
+        if launch_setup_after:
+            self.extractor_worker.extraction_finished.connect(
+                lambda: self.launch_setup_installer(destination_path)
+            )
+        else:
+            self.extractor_worker.extraction_finished.connect(
+                lambda: QMessageBox.information(self, "Done", "Extraction finished successfully!")
+            )
+            
+        self.extractor_thread.start()
 
         
 
